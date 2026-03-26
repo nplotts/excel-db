@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Excel Sports - ScoutDB</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #0a0e17; }
+    </style>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+    <script src="https://unpkg.com/lucide-react@0.383.0/dist/umd/lucide-react.min.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel" data-type="module">
+const { useState, useMemo, useRef, useEffect, useCallback } = React;
+const { Search, ChevronDown, X, BarChart3, ChevronLeft, ChevronRight, Plus, Eye, ArrowUpDown, MessageSquarePlus, Clock, RefreshCw, Loader2, Wifi, WifiOff } = lucideReact;
+const { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } = Recharts;
+
+// =====================================================
+// PASTE YOUR GOOGLE APPS SCRIPT WEB APP URL BELOW
+// =====================================================
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbytyr2RlcqlviuROvsOr3kbgRNUCsaTH5GhhO5DwUcQdwB9DjR201XrCVdzMAqs5L0C/exec";
+// =====================================================
+
+const TIER_COLORS = {
+  "1": { bg: "#14532d", text: "#bbf7d0", badge: "#22c55e", label: "Tier 1" },
+  "2": { bg: "#1e3a5f", text: "#bfdbfe", badge: "#3b82f6", label: "Tier 2" },
+  "3": { bg: "#713f12", text: "#fef08a", badge: "#eab308", label: "Tier 3" },
+  "4": { bg: "#7f1d1d", text: "#fecaca", badge: "#ef4444", label: "Tier 4" },
+};
+const CHART_COLORS = ["#22c55e","#3b82f6","#eab308","#ef4444","#8b5cf6","#ec4899","#06b6d4","#f97316","#84cc16","#a855f7","#14b8a6","#e11d48","#6366f1","#f59e0b","#10b981","#d946ef","#0ea5e9","#fb923c","#4ade80","#f43f5e"];
+const F = "'DM Sans', sans-serif";
+const LOGO_SRC = "logo.png";
+
+// ===== API HELPERS =====
+async function fetchData() {
+  const res = await fetch(APPS_SCRIPT_URL);
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+async function postData(payload) {
+  const res = await fetch(APPS_SCRIPT_URL, {
+    method: "POST",
+    headers: { "Content-Type": "text/plain" }, // Apps Script needs this for CORS
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+function getUnique(data, field) {
+  return [...new Set(data.map(d => d[field]).filter(Boolean))].sort();
+}
+
+function Dropdown({ label, options, selected, onChange, multi = true }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => { const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, []);
+  const count = selected.length;
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button onClick={() => setOpen(!open)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 8, border: count > 0 ? "1.5px solid #3b82f6" : "1px solid #374151", background: count > 0 ? "rgba(59,130,246,0.08)" : "#111827", color: count > 0 ? "#93c5fd" : "#9ca3af", fontSize: 13, cursor: "pointer", whiteSpace: "nowrap", fontFamily: F }}>
+        {label}{count > 0 && ` (${count})`}<ChevronDown size={14} />
+      </button>
+      {open && (
+        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 50, background: "#1f2937", border: "1px solid #374151", borderRadius: 10, padding: 6, minWidth: 200, maxHeight: 280, overflowY: "auto", boxShadow: "0 10px 40px rgba(0,0,0,0.5)" }}>
+          {count > 0 && <button onClick={() => onChange([])} style={{ width: "100%", padding: "6px 10px", background: "none", border: "none", color: "#ef4444", fontSize: 12, cursor: "pointer", textAlign: "left", fontFamily: F }}>Clear all</button>}
+          {options.map(opt => {
+            const active = selected.includes(opt);
+            return (<button key={opt} onClick={() => { if (multi) onChange(active ? selected.filter(s => s !== opt) : [...selected, opt]); else { onChange(active ? [] : [opt]); setOpen(false); } }} style={{ display: "block", width: "100%", padding: "6px 10px", background: active ? "rgba(59,130,246,0.15)" : "none", border: "none", color: active ? "#93c5fd" : "#d1d5db", fontSize: 13, cursor: "pointer", textAlign: "left", borderRadius: 6, fontFamily: F }}>
+              {multi && <span style={{ marginRight: 8, opacity: active ? 1 : 0.3 }}>{active ? "\u2713" : "\u25CB"}</span>}{opt}
+            </button>);
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EditableCell({ value, onSave, style, inputWidth }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const ref = useRef(null);
+  useEffect(() => { if (editing && ref.current) ref.current.focus(); }, [editing]);
+  useEffect(() => { setDraft(value); }, [value]);
+  if (editing) return (
+    <input ref={ref} value={draft} onChange={e => setDraft(e.target.value)}
+      onBlur={() => { onSave(draft); setEditing(false); }}
+      onKeyDown={e => { if (e.key === "Enter") { onSave(draft); setEditing(false); } if (e.key === "Escape") { setDraft(value); setEditing(false); } }}
+      style={{ background: "#0d1117", border: "1px solid #3b82f6", borderRadius: 4, color: "#f9fafb", fontSize: 13, fontFamily: F, padding: "2px 6px", outline: "none", width: inputWidth || "100%", boxSizing: "border-box" }} />
+  );
+  return (<span onClick={() => setEditing(true)} style={{ ...style, cursor: "pointer", borderBottom: "1px dashed transparent" }} onMouseEnter={e => e.currentTarget.style.borderBottomColor = "#374151"} onMouseLeave={e => e.currentTarget.style.borderBottomColor = "transparent"} title="Click to edit">{value || "\u2014"}</span>);
+}
+
+function TierBadge({ tier, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => { const h = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, []);
+  const tc = TIER_COLORS[tier] || TIER_COLORS["4"];
+  return (
+    <div ref={ref} style={{ position: "relative", display: "inline-block" }}>
+      <span onClick={() => setOpen(!open)} style={{ display: "inline-block", padding: "3px 10px", borderRadius: 20, fontSize: 12, fontWeight: 700, background: tc.bg, color: tc.badge, fontFamily: F, cursor: "pointer", userSelect: "none" }} title="Click to change tier">{tier}</span>
+      {open && (<div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 60, background: "#1f2937", border: "1px solid #374151", borderRadius: 8, padding: 4, boxShadow: "0 8px 24px rgba(0,0,0,0.5)" }}>
+        {["1","2","3","4"].map(t => { const c = TIER_COLORS[t]; return (<button key={t} onClick={() => { onChange(t); setOpen(false); }} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "5px 10px", background: tier === t ? "rgba(59,130,246,0.15)" : "none", border: "none", borderRadius: 4, cursor: "pointer", fontFamily: F }}><span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: c.badge }} /><span style={{ color: "#d1d5db", fontSize: 13 }}>{c.label}</span></button>); })}
+      </div>)}
+    </div>
+  );
+}
+
+function PlayerModal({ player, onClose, locationLabel, onAddEval, tab }) {
+  const [showAddEval, setShowAddEval] = useState(false);
+  const [evalForm, setEvalForm] = useState({ evaluator: "", notes: "" });
+  const [saving, setSaving] = useState(false);
+  if (!player) return null;
+  const tier = TIER_COLORS[player.tier] || TIER_COLORS["4"];
+  const evals = player.evaluations || [];
+
+  const handleAddEval = async () => {
+    if (!evalForm.notes.trim() || !evalForm.evaluator.trim()) return;
+    setSaving(true);
+    try {
+      await postData({
+        action: "addEval",
+        tab: tab === "college" ? "College" : "HS",
+        lastName: player.lastName,
+        firstName: player.firstName,
+        evaluator: evalForm.evaluator,
+        notes: evalForm.notes.trim(),
+      });
+      const now = new Date();
+      const dateStr = now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+      onAddEval(player.id, { evaluator: evalForm.evaluator, date: dateStr, notes: evalForm.notes.trim() });
+      setEvalForm({ evaluator: "", notes: "" });
+      setShowAddEval(false);
+    } catch (err) {
+      alert("Failed to save evaluation: " + err.message);
+    }
+    setSaving(false);
+  };
+
+  const inputStyle = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #374151", background: "#0d1117", color: "#f9fafb", fontSize: 13, fontFamily: F, outline: "none", boxSizing: "border-box" };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, backdropFilter: "blur(4px)" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#111827", borderRadius: 16, padding: 28, maxWidth: 600, width: "100%", border: "1px solid #1f2937", boxShadow: "0 25px 60px rgba(0,0,0,0.5)", maxHeight: "85vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 20 }}>
+          <div>
+            <h2 style={{ fontSize: 24, fontWeight: 700, color: "#f9fafb", margin: 0, fontFamily: F }}>{player.firstName} {player.lastName}</h2>
+            <p style={{ color: "#9ca3af", margin: "4px 0 0", fontSize: 14, fontFamily: F }}>{player.position} \u00B7 {locationLabel}: {player.location} \u00B7 Class of {player.class}</p>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer" }}><X size={20} /></button>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20 }}>
+          <span style={{ padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, background: tier.bg, color: tier.badge, fontFamily: F }}>{tier.label}</span>
+          {player.handedness && <span style={{ padding: "4px 12px", borderRadius: 20, fontSize: 12, background: "#1f2937", color: "#d1d5db", fontFamily: F }}>{player.handedness}</span>}
+          {player.age && <span style={{ padding: "4px 12px", borderRadius: 20, fontSize: 12, background: "#1f2937", color: "#d1d5db", fontFamily: F }}>Age: {player.age}</span>}
+          {player.agency && <span style={{ padding: "4px 12px", borderRadius: 20, fontSize: 12, background: "#1f2937", color: "#d1d5db", fontFamily: F }}>{player.agency}</span>}
+          <span style={{ padding: "4px 12px", borderRadius: 20, fontSize: 12, background: "#1f2937", color: "#9ca3af", fontFamily: F }}>{evals.length} eval{evals.length !== 1 ? "s" : ""}</span>
+        </div>
+        {!showAddEval ? (
+          <button onClick={() => setShowAddEval(true)} style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "10px 14px", borderRadius: 10, border: "1px dashed #374151", background: "rgba(59,130,246,0.04)", color: "#93c5fd", fontSize: 13, fontWeight: 500, cursor: "pointer", fontFamily: F, marginBottom: 20 }}>
+            <MessageSquarePlus size={16} /> Add New Evaluation
+          </button>
+        ) : (
+          <div style={{ background: "#0d1117", borderRadius: 10, padding: 16, marginBottom: 20, border: "1px solid #1e3a5f" }}>
+            <p style={{ fontSize: 13, fontWeight: 600, color: "#93c5fd", margin: "0 0 12px", fontFamily: F }}>New Evaluation</p>
+            <div style={{ marginBottom: 10 }}>
+              <label style={{ fontSize: 11, color: "#6b7280", display: "block", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1, fontFamily: F }}>Evaluator *</label>
+              <input style={inputStyle} value={evalForm.evaluator} onChange={e => setEvalForm({...evalForm, evaluator: e.target.value})} placeholder="Your name" />
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 11, color: "#6b7280", display: "block", marginBottom: 4, textTransform: "uppercase", letterSpacing: 1, fontFamily: F }}>Scouting Notes *</label>
+              <textarea style={{ ...inputStyle, minHeight: 80, resize: "vertical" }} value={evalForm.notes} onChange={e => setEvalForm({...evalForm, notes: e.target.value})} placeholder="What did you see?" />
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={handleAddEval} disabled={saving} style={{ padding: "8px 20px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 13, fontWeight: 600, border: "none", cursor: saving ? "wait" : "pointer", fontFamily: F, opacity: saving ? 0.6 : 1 }}>
+                {saving ? "Saving..." : "Save Evaluation"}
+              </button>
+              <button onClick={() => { setShowAddEval(false); setEvalForm({ evaluator: "", notes: "" }); }} style={{ padding: "8px 16px", borderRadius: 8, background: "#1f2937", color: "#9ca3af", fontSize: 13, border: "1px solid #374151", cursor: "pointer", fontFamily: F }}>Cancel</button>
+            </div>
+          </div>
+        )}
+        <div>
+          <p style={{ fontSize: 11, color: "#6b7280", marginBottom: 10, textTransform: "uppercase", letterSpacing: 1, fontFamily: F }}>
+            <Clock size={12} style={{ display: "inline", verticalAlign: "middle", marginRight: 6 }} />Evaluation History ({evals.length})
+          </p>
+          {evals.length === 0 && <p style={{ color: "#4b5563", fontSize: 13, fontFamily: F }}>No evaluations yet</p>}
+          {evals.map((ev, i) => (
+            <div key={i} style={{ padding: 14, borderRadius: 10, marginBottom: 8, background: i === 0 ? "rgba(59,130,246,0.06)" : "transparent", border: i === 0 ? "1px solid #1e3a5f" : "1px solid #1f2937" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: i === 0 ? "#93c5fd" : "#d1d5db", fontFamily: F }}>{ev.evaluator}</span>
+                <span style={{ fontSize: 11, color: "#6b7280", fontFamily: F }}>{ev.date}{i === 0 && evals.length > 1 ? " \u2014 Latest" : ""}</span>
+              </div>
+              <p style={{ color: "#d1d5db", fontSize: 13, lineHeight: 1.6, margin: 0, fontFamily: F }}>{ev.notes}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AgencyChart({ data, title, search, filters }) {
+  const filtered = useMemo(() => {
+    let d = [...data];
+    if (search) { const s = search.toLowerCase(); d = d.filter(p => p.lastName.toLowerCase().includes(s) || p.firstName.toLowerCase().includes(s) || p.position.toLowerCase().includes(s) || p.location.toLowerCase().includes(s) || p.agency.toLowerCase().includes(s)); }
+    if (filters.tier.length) d = d.filter(p => filters.tier.includes(p.tier));
+    if (filters.class.length) d = d.filter(p => filters.class.includes(p.class));
+    if (filters.position.length) d = d.filter(p => filters.position.includes(p.position));
+    if (filters.location?.length) d = d.filter(p => filters.location.includes(p.location));
+    return d;
+  }, [data, search, filters]);
+  const chartData = useMemo(() => {
+    const counts = {};
+    filtered.forEach(p => { if (p.agency) counts[p.agency] = (counts[p.agency] || 0) + 1; });
+    let result = Object.entries(counts).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+    if (filters.agency.length) result = result.filter(r => filters.agency.includes(r.name));
+    return result.slice(0, 20);
+  }, [filtered, filters.agency]);
+  const activeDesc = useMemo(() => {
+    const parts = [];
+    if (filters.tier.length) parts.push("Tier " + filters.tier.join(", "));
+    if (filters.class.length) parts.push("Class " + filters.class.join(", "));
+    if (filters.position.length) parts.push(filters.position.join(", "));
+    if (filters.location?.length) parts.push(filters.location.join(", "));
+    if (filters.agency.length) parts.push(filters.agency.join(", "));
+    if (search) parts.push('"' + search + '"');
+    return parts.length > 0 ? " \u2014 Filtered: " + parts.join(" \u00B7 ") : "";
+  }, [filters, search]);
+  return (
+    <div style={{ background: "#111827", borderRadius: 14, padding: 20, border: "1px solid #1f2937" }}>
+      <h3 style={{ fontSize: 15, fontWeight: 600, color: "#f9fafb", margin: "0 0 4px", fontFamily: F }}><BarChart3 size={16} style={{ display: "inline", marginRight: 8, verticalAlign: "middle" }} />{title} \u2014 Advisees by Agency{chartData.length < 20 ? "" : " (Top 20)"}</h3>
+      {activeDesc && <p style={{ fontSize: 12, color: "#6b7280", margin: "0 0 14px", fontFamily: F }}>{activeDesc}</p>}
+      {!activeDesc && <div style={{ height: 14 }} />}
+      {chartData.length === 0 ? (<p style={{ textAlign: "center", color: "#6b7280", padding: 40, fontSize: 14, fontFamily: F }}>No data matches current filters</p>) : (
+        <div style={{ height: Math.max(200, chartData.length * 28 + 20) }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} layout="vertical" margin={{ left: 10, right: 20, top: 0, bottom: 0 }}>
+              <XAxis type="number" tick={{ fill: "#6b7280", fontSize: 11, fontFamily: F }} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="name" width={110} tick={{ fill: "#d1d5db", fontSize: 11, fontFamily: F }} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={{ background: "#1f2937", border: "1px solid #374151", borderRadius: 8, fontFamily: F, fontSize: 13 }} labelStyle={{ color: "#f9fafb" }} itemStyle={{ color: "#93c5fd" }} cursor={{ fill: "rgba(59,130,246,0.08)" }} />
+              <Bar dataKey="count" radius={[0, 6, 6, 0]} barSize={18}>{chartData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}</Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DataTable({ data, locationLabel, search, filters, sortConfig, onSort, onUpdatePlayer, onAddEval, tab }) {
+  const [page, setPage] = useState(0);
+  const [selectedPlayer, setSelectedPlayer] = useState(null);
+  const pageSize = 25;
+  const filtered = useMemo(() => {
+    let d = [...data];
+    if (search) { const s = search.toLowerCase(); d = d.filter(p => p.lastName.toLowerCase().includes(s) || p.firstName.toLowerCase().includes(s) || p.position.toLowerCase().includes(s) || p.location.toLowerCase().includes(s) || p.agency.toLowerCase().includes(s) || (p.evaluations && p.evaluations.some(ev => ev.notes.toLowerCase().includes(s)))); }
+    if (filters.tier.length) d = d.filter(p => filters.tier.includes(p.tier));
+    if (filters.class.length) d = d.filter(p => filters.class.includes(p.class));
+    if (filters.agency.length) d = d.filter(p => filters.agency.includes(p.agency));
+    if (filters.position.length) d = d.filter(p => filters.position.includes(p.position));
+    if (filters.location?.length) d = d.filter(p => filters.location.includes(p.location));
+    if (sortConfig.key) {
+      d.sort((a, b) => {
+        let aVal = a[sortConfig.key] || ""; let bVal = b[sortConfig.key] || "";
+        if (["tier","age","class"].includes(sortConfig.key)) { aVal = parseFloat(aVal) || 999; bVal = parseFloat(bVal) || 999; }
+        else { aVal = aVal.toLowerCase(); bVal = bVal.toLowerCase(); }
+        if (aVal < bVal) return sortConfig.dir === "asc" ? -1 : 1;
+        if (aVal > bVal) return sortConfig.dir === "asc" ? 1 : -1;
+        return 0;
+      });
+    }
+    return d;
+  }, [data, search, filters, sortConfig]);
+  useEffect(() => { if (selectedPlayer) { const u = data.find(p => p.id === selectedPlayer.id); if (u) setSelectedPlayer(u); } }, [data]);
+  useEffect(() => setPage(0), [search, filters, sortConfig]);
+  const totalPages = Math.ceil(filtered.length / pageSize);
+  const paged = filtered.slice(page * pageSize, (page + 1) * pageSize);
+
+  const handleFieldUpdate = async (player, field, value) => {
+    onUpdatePlayer(player.id, field, value);
+    try {
+      await postData({ action: "updateField", tab, row: player._row, field, value });
+    } catch (err) { console.error("Sync error:", err); }
+  };
+
+  const SortHeader = ({ field, children, width }) => (
+    <th onClick={() => onSort(field)} style={{ padding: "10px 12px", textAlign: "left", fontSize: 11, fontWeight: 600, color: sortConfig.key === field ? "#93c5fd" : "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", cursor: "pointer", userSelect: "none", whiteSpace: "nowrap", width: width || "auto", borderBottom: "1px solid #1f2937", fontFamily: F, position: "sticky", top: 0, background: "#0d1117", zIndex: 2 }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{children}<ArrowUpDown size={12} style={{ opacity: sortConfig.key === field ? 1 : 0.3 }} /></span>
+    </th>
+  );
+  const getLatestNote = (p) => p.evaluations?.length > 0 ? p.evaluations[0].notes : "";
+
+  return (
+    <>
+      <PlayerModal player={selectedPlayer} onClose={() => setSelectedPlayer(null)} locationLabel={locationLabel} onAddEval={onAddEval} tab={tab} />
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <p style={{ fontSize: 13, color: "#6b7280", margin: 0, fontFamily: F }}>{filtered.length} player{filtered.length !== 1 ? "s" : ""}<span style={{ marginLeft: 8, fontSize: 11, color: "#4b5563" }}>Click any cell to edit \u00B7 Click <Eye size={11} style={{display:"inline",verticalAlign:"middle"}} /> for eval history</span></p>
+        {totalPages > 1 && (<div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button disabled={page === 0} onClick={() => setPage(p => p - 1)} style={{ background: "#1f2937", border: "none", color: page === 0 ? "#374151" : "#d1d5db", borderRadius: 6, padding: "4px 8px", cursor: page === 0 ? "default" : "pointer" }}><ChevronLeft size={16} /></button>
+          <span style={{ fontSize: 13, color: "#9ca3af", fontFamily: F }}>{page + 1} / {totalPages}</span>
+          <button disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)} style={{ background: "#1f2937", border: "none", color: page >= totalPages - 1 ? "#374151" : "#d1d5db", borderRadius: 6, padding: "4px 8px", cursor: page >= totalPages - 1 ? "default" : "pointer" }}><ChevronRight size={16} /></button>
+        </div>)}
+      </div>
+      <div style={{ borderRadius: 12, border: "1px solid #1f2937", overflow: "hidden" }}>
+        <div style={{ overflowX: "auto", maxHeight: "calc(100vh - 340px)", overflowY: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 950 }}>
+            <thead><tr>
+              <SortHeader field="tier" width="70px">Tier</SortHeader>
+              <SortHeader field="lastName" width="150px">Player</SortHeader>
+              <SortHeader field="position" width="80px">Pos</SortHeader>
+              <SortHeader field="class" width="70px">Class</SortHeader>
+              <SortHeader field="age" width="60px">Age</SortHeader>
+              <th style={{ padding: "10px 12px", textAlign: "left", fontSize: 11, fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #1f2937", fontFamily: F, position: "sticky", top: 0, background: "#0d1117", zIndex: 2, width: "60px" }}>B/T</th>
+              <SortHeader field="agency" width="110px">Agency</SortHeader>
+              <SortHeader field="location" width="120px">{locationLabel}</SortHeader>
+              <th style={{ padding: "10px 12px", textAlign: "left", fontSize: 11, fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #1f2937", fontFamily: F, position: "sticky", top: 0, background: "#0d1117", zIndex: 2, width: "50px" }}>Evals</th>
+              <th style={{ padding: "10px 12px", textAlign: "left", fontSize: 11, fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", borderBottom: "1px solid #1f2937", fontFamily: F, position: "sticky", top: 0, background: "#0d1117", zIndex: 2 }}>Latest Notes</th>
+              <th style={{ padding: "10px 12px", width: 40, borderBottom: "1px solid #1f2937", position: "sticky", top: 0, background: "#0d1117", zIndex: 2 }}></th>
+            </tr></thead>
+            <tbody>
+              {paged.map((p, i) => {
+                const evalCount = p.evaluations ? p.evaluations.length : 0;
+                return (
+                  <tr key={p.id} style={{ background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.015)", transition: "background 0.15s" }}
+                    onMouseEnter={e => e.currentTarget.style.background = "rgba(59,130,246,0.06)"}
+                    onMouseLeave={e => e.currentTarget.style.background = i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.015)"}>
+                    <td style={{ padding: "8px 12px" }}><TierBadge tier={p.tier} onChange={v => handleFieldUpdate(p, "tier", v)} /></td>
+                    <td style={{ padding: "8px 12px", fontSize: 13, fontFamily: F }}><EditableCell value={p.lastName + ", " + p.firstName} style={{ fontWeight: 600, color: "#f9fafb" }} onSave={v => { const parts = v.split(",").map(s => s.trim()); if (parts.length >= 2) { handleFieldUpdate(p, "lastName", parts[0]); handleFieldUpdate(p, "firstName", parts.slice(1).join(" ")); } }} inputWidth="130px" /></td>
+                    <td style={{ padding: "8px 12px", fontSize: 13, fontFamily: F }}><EditableCell value={p.position} style={{ color: "#d1d5db" }} onSave={v => handleFieldUpdate(p, "position", v)} inputWidth="60px" /></td>
+                    <td style={{ padding: "8px 12px", fontSize: 13, fontFamily: F }}><EditableCell value={p.class} style={{ color: "#d1d5db" }} onSave={v => handleFieldUpdate(p, "class", v)} inputWidth="50px" /></td>
+                    <td style={{ padding: "8px 12px", fontSize: 13, fontFamily: F }}><EditableCell value={p.age} style={{ color: "#9ca3af" }} onSave={v => handleFieldUpdate(p, "age", v)} inputWidth="45px" /></td>
+                    <td style={{ padding: "8px 12px", fontSize: 13, fontFamily: F }}><EditableCell value={p.handedness} style={{ color: "#9ca3af" }} onSave={v => handleFieldUpdate(p, "handedness", v)} inputWidth="45px" /></td>
+                    <td style={{ padding: "8px 12px", fontSize: 13, fontFamily: F }}><EditableCell value={p.agency} style={{ color: "#93c5fd" }} onSave={v => handleFieldUpdate(p, "agency", v)} inputWidth="90px" /></td>
+                    <td style={{ padding: "8px 12px", fontSize: 13, fontFamily: F }}><EditableCell value={p.location} style={{ color: "#d1d5db" }} onSave={v => handleFieldUpdate(p, "location", v)} inputWidth="100px" /></td>
+                    <td style={{ padding: "8px 12px", textAlign: "center" }}><span style={{ fontSize: 12, fontWeight: 600, color: evalCount > 1 ? "#93c5fd" : "#6b7280", fontFamily: F }}>{evalCount}</span></td>
+                    <td style={{ padding: "8px 12px", fontSize: 12, fontFamily: F, color: "#9ca3af", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{getLatestNote(p)}</td>
+                    <td style={{ padding: "8px 12px" }}><button onClick={() => setSelectedPlayer(p)} style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer", padding: 4 }} title="View eval history"><Eye size={15} /></button></td>
+                  </tr>
+                );
+              })}
+              {paged.length === 0 && <tr><td colSpan={11} style={{ padding: 40, textAlign: "center", color: "#6b7280", fontSize: 14, fontFamily: F }}>No players match your filters</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function AddPlayerModal({ onClose, onAdd, locationLabel, tab }) {
+  const [form, setForm] = useState({ firstName: "", lastName: "", position: "", class: "", tier: "3", age: "", handedness: "", agency: "", location: "", agentEval: "", notes: "" });
+  const [saving, setSaving] = useState(false);
+  const handleSubmit = async () => {
+    if (!form.firstName || !form.lastName) return;
+    setSaving(true);
+    try {
+      await postData({ action: "addPlayer", tab, player: form });
+      onAdd(form);
+      onClose();
+    } catch (err) { alert("Failed to add player: " + err.message); }
+    setSaving(false);
+  };
+  const inputStyle = { width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid #374151", background: "#0d1117", color: "#f9fafb", fontSize: 13, fontFamily: F, outline: "none", boxSizing: "border-box" };
+  const labelStyle = { fontSize: 11, color: "#6b7280", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: 1, fontFamily: F };
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, backdropFilter: "blur(4px)" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "#111827", borderRadius: 16, padding: 28, maxWidth: 520, width: "100%", border: "1px solid #1f2937", boxShadow: "0 25px 60px rgba(0,0,0,0.5)", maxHeight: "90vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 20 }}>
+          <h2 style={{ fontSize: 20, fontWeight: 700, color: "#f9fafb", margin: 0, fontFamily: F }}>Add New Player</h2>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "#6b7280", cursor: "pointer" }}><X size={20} /></button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div><label style={labelStyle}>First Name *</label><input style={inputStyle} value={form.firstName} onChange={e => setForm({...form, firstName: e.target.value})} /></div>
+          <div><label style={labelStyle}>Last Name *</label><input style={inputStyle} value={form.lastName} onChange={e => setForm({...form, lastName: e.target.value})} /></div>
+          <div><label style={labelStyle}>Position</label><input style={inputStyle} value={form.position} onChange={e => setForm({...form, position: e.target.value})} /></div>
+          <div><label style={labelStyle}>Class</label><input style={inputStyle} value={form.class} onChange={e => setForm({...form, class: e.target.value})} placeholder="2027" /></div>
+          <div><label style={labelStyle}>Tier</label><select style={{...inputStyle, cursor: "pointer"}} value={form.tier} onChange={e => setForm({...form, tier: e.target.value})}><option value="1">Tier 1</option><option value="2">Tier 2</option><option value="3">Tier 3</option><option value="4">Tier 4</option></select></div>
+          <div><label style={labelStyle}>Age</label><input style={inputStyle} value={form.age} onChange={e => setForm({...form, age: e.target.value})} /></div>
+          <div><label style={labelStyle}>B/T</label><input style={inputStyle} value={form.handedness} onChange={e => setForm({...form, handedness: e.target.value})} placeholder="R/R" /></div>
+          <div><label style={labelStyle}>Agency</label><input style={inputStyle} value={form.agency} onChange={e => setForm({...form, agency: e.target.value})} /></div>
+          <div style={{ gridColumn: "1 / -1" }}><label style={labelStyle}>{locationLabel}</label><input style={inputStyle} value={form.location} onChange={e => setForm({...form, location: e.target.value})} /></div>
+          <div style={{ gridColumn: "1 / -1" }}><label style={labelStyle}>Evaluator</label><input style={inputStyle} value={form.agentEval} onChange={e => setForm({...form, agentEval: e.target.value})} /></div>
+          <div style={{ gridColumn: "1 / -1" }}><label style={labelStyle}>Initial Scouting Notes</label><textarea style={{...inputStyle, minHeight: 80, resize: "vertical"}} value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} /></div>
+        </div>
+        <button onClick={handleSubmit} disabled={saving} style={{ marginTop: 16, width: "100%", padding: "10px 0", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 14, fontWeight: 600, border: "none", cursor: saving ? "wait" : "pointer", fontFamily: F, opacity: saving ? 0.6 : 1 }}>{saving ? "Saving..." : "Add Player"}</button>
+      </div>
+    </div>
+  );
+}
+
+const APP_PASSWORD = "ESM2026";
+
+function LoginScreen({ onAuth }) {
+  const [pw, setPw] = useState("");
+  const [err, setErr] = useState(false);
+  const handleSubmit = () => {
+    const trimmed = pw.trim();
+    if (trimmed === APP_PASSWORD) { onAuth(); }
+    else { setErr(true); setPw(""); }
+  };
+  return (
+    <div style={{ minHeight: "100vh", background: "#0a0e17", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: F, color: "#f9fafb" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+      <img src={LOGO_SRC} alt="Excel Sports" style={{ height: 50, marginBottom: 24 }} />
+      <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 20, letterSpacing: "0.04em" }}>Excel Baseball Player Evaluation Database</p>
+      <div style={{ background: "#111827", borderRadius: 14, padding: 28, width: 340, border: "1px solid #1f2937" }}>
+        <p style={{ fontSize: 15, fontWeight: 600, marginBottom: 16, textAlign: "center", color: "#f9fafb" }}>Enter Password</p>
+        <input type="text" autoComplete="off" value={pw} onChange={function(e) { setPw(e.target.value); setErr(false); }}
+          onKeyDown={function(e) { if (e.key === "Enter") handleSubmit(); }}
+          placeholder="Password"
+          style={{ width: "100%", padding: "10px 14px", borderRadius: 8, border: err ? "1px solid #ef4444" : "1px solid #374151", background: "#0d1117", color: "#f9fafb", fontSize: 14, fontFamily: F, outline: "none", boxSizing: "border-box", marginBottom: 12, WebkitTextSecurity: "disc" }}
+          autoFocus
+        />
+        {err && <p style={{ color: "#ef4444", fontSize: 12, marginBottom: 10, textAlign: "center" }}>Incorrect password. Try again.</p>}
+        <button onClick={handleSubmit} style={{ width: "100%", padding: "10px 0", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 14, fontWeight: 600, border: "none", cursor: "pointer", fontFamily: F }}>Access Database</button>
+      </div>
+    </div>
+  );
+}
+
+function ScoutDB() {
+  const [authed, setAuthed] = useState(false);
+  const [tab, setTab] = useState("college");
+  const [search, setSearch] = useState("");
+  const [showChart, setShowChart] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [collegeData, setCollegeData] = useState([]);
+  const [hsData, setHsData] = useState([]);
+  const [sortConfig, setSortConfig] = useState({ key: "tier", dir: "asc" });
+  const emptyFilters = { tier: [], class: [], agency: [], position: [], location: [] };
+  const [collegeFilters, setCollegeFilters] = useState(emptyFilters);
+  const [hsFilters, setHsFilters] = useState(emptyFilters);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [lastSync, setLastSync] = useState(null);
+
+  if (!authed) return <LoginScreen onAuth={() => setAuthed(true)} />;
+
+  const data = tab === "college" ? collegeData : hsData;
+  const setData = tab === "college" ? setCollegeData : setHsData;
+  const filters = tab === "college" ? collegeFilters : hsFilters;
+  const setFilters = tab === "college" ? setCollegeFilters : setHsFilters;
+  const locationLabel = tab === "college" ? "School" : "Area";
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await fetchData();
+      setCollegeData(result.college || []);
+      setHsData(result.hs || []);
+      setLastSync(new Date());
+    } catch (err) {
+      setError(err.message);
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { loadData(); }, [loadData]);
+
+  const filterOptions = useMemo(() => ({
+    tiers: getUnique(data, "tier"), classes: getUnique(data, "class"),
+    agencies: getUnique(data, "agency"), positions: getUnique(data, "position"),
+    locations: getUnique(data, "location"),
+  }), [data]);
+  const activeFilterCount = Object.values(filters).reduce((s, a) => s + a.length, 0);
+  const handleSort = (key) => setSortConfig(prev => prev.key === key ? { key, dir: prev.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" });
+
+  const handleAddPlayer = (player) => {
+    // Optimistic update — refresh from sheet to get the real row ID
+    loadData();
+  };
+
+  const handleUpdatePlayer = (id, field, value) => {
+    setCollegeData(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p));
+    setHsData(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p));
+  };
+
+  const handleAddEval = useCallback((playerId, evalEntry) => {
+    setCollegeData(prev => prev.map(p => p.id === playerId ? { ...p, evaluations: [evalEntry, ...(p.evaluations || [])] } : p));
+    setHsData(prev => prev.map(p => p.id === playerId ? { ...p, evaluations: [evalEntry, ...(p.evaluations || [])] } : p));
+  }, []);
+
+  const tierCounts = useMemo(() => {
+    const counts = { "1": 0, "2": 0, "3": 0, "4": 0 };
+    data.forEach(p => { if (counts[p.tier] !== undefined) counts[p.tier]++; });
+    return counts;
+  }, [data]);
+
+  // Loading / Error states
+  if (loading && collegeData.length === 0) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#0a0e17", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: F, color: "#f9fafb" }}>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+        <img src={LOGO_SRC} alt="Excel Sports" style={{ height: 50, marginBottom: 20 }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#93c5fd" }}>
+          <Loader2 size={20} style={{ animation: "spin 1s linear infinite" }} />
+          <span style={{ fontSize: 15 }}>Loading player database...</span>
+        </div>
+        <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
+
+  if (error && collegeData.length === 0) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#0a0e17", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: F, color: "#f9fafb", padding: 40 }}>
+        <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+        <WifiOff size={40} style={{ color: "#ef4444", marginBottom: 16 }} />
+        <h2 style={{ fontSize: 20, marginBottom: 8 }}>Connection Error</h2>
+        <p style={{ color: "#9ca3af", fontSize: 14, textAlign: "center", maxWidth: 400, marginBottom: 20 }}>{error}</p>
+        <button onClick={loadData} style={{ padding: "10px 24px", borderRadius: 8, background: "#3b82f6", color: "#fff", fontSize: 14, fontWeight: 600, border: "none", cursor: "pointer", fontFamily: F }}>Try Again</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#0a0e17", fontFamily: F, color: "#f9fafb" }}>
+      <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+      <div style={{ padding: "20px 24px 0", borderBottom: "1px solid #1f2937", background: "linear-gradient(180deg, #0d1117 0%, #0a0e17 100%)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <img src={LOGO_SRC} alt="Excel Sports" style={{ height: 40 }} />
+            <div><p style={{ fontSize: 12, color: "#9ca3af", margin: 0, fontFamily: F, letterSpacing: "0.04em" }}>Excel Baseball Player Evaluation Database</p></div>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button onClick={loadData} disabled={loading} title={lastSync ? "Last synced: " + lastSync.toLocaleTimeString() : "Refresh"} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 8, fontSize: 12, background: "#1f2937", color: loading ? "#374151" : "#9ca3af", border: "1px solid #374151", cursor: loading ? "wait" : "pointer", fontFamily: F }}>
+              <RefreshCw size={14} style={loading ? { animation: "spin 1s linear infinite" } : {}} /> Sync
+            </button>
+            <button onClick={() => setShowChart(!showChart)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 500, background: showChart ? "rgba(59,130,246,0.15)" : "#1f2937", color: showChart ? "#93c5fd" : "#d1d5db", border: showChart ? "1px solid #3b82f6" : "1px solid #374151", cursor: "pointer", fontFamily: F }}>
+              <BarChart3 size={15} /> Agency Intel
+            </button>
+            <button onClick={() => setShowAddModal(true)} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, background: "#3b82f6", color: "#fff", border: "none", cursor: "pointer", fontFamily: F }}>
+              <Plus size={15} /> Add Player
+            </button>
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 0 }}>
+          {[{ key: "college", label: "College", count: collegeData.length }, { key: "hs", label: "High School", count: hsData.length }].map(t => (
+            <button key={t.key} onClick={() => { setTab(t.key); setSearch(""); setSortConfig({ key: "tier", dir: "asc" }); }} style={{ padding: "10px 20px", fontSize: 14, fontWeight: 600, background: "none", border: "none", color: tab === t.key ? "#f9fafb" : "#6b7280", borderBottom: tab === t.key ? "2px solid #3b82f6" : "2px solid transparent", cursor: "pointer", fontFamily: F, transition: "all 0.15s" }}>{t.label} <span style={{ fontSize: 12, opacity: 0.6, marginLeft: 4 }}>({t.count})</span></button>
+          ))}
+        </div>
+      </div>
+      <div style={{ padding: "16px 24px 24px" }}>
+        <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+          {["1","2","3","4"].map(t => { const tc = TIER_COLORS[t]; return (<div key={t} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 14px", borderRadius: 10, background: tc.bg, border: `1px solid ${tc.badge}22` }}><span style={{ fontSize: 12, color: tc.text, fontWeight: 600 }}>{tc.label}</span><span style={{ fontSize: 16, fontWeight: 700, color: tc.badge }}>{tierCounts[t]}</span></div>); })}
+        </div>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ position: "relative", flex: "1 1 220px", maxWidth: 320 }}>
+            <Search size={16} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "#6b7280" }} />
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search players, schools, agencies, notes..." style={{ width: "100%", padding: "9px 12px 9px 36px", borderRadius: 8, border: "1px solid #374151", background: "#111827", color: "#f9fafb", fontSize: 13, outline: "none", fontFamily: F, boxSizing: "border-box" }} />
+          </div>
+          <Dropdown label="Tier" options={filterOptions.tiers} selected={filters.tier} onChange={v => setFilters({...filters, tier: v})} />
+          <Dropdown label="Class" options={filterOptions.classes} selected={filters.class} onChange={v => setFilters({...filters, class: v})} />
+          <Dropdown label="Position" options={filterOptions.positions} selected={filters.position} onChange={v => setFilters({...filters, position: v})} />
+          <Dropdown label="Agency" options={filterOptions.agencies} selected={filters.agency} onChange={v => setFilters({...filters, agency: v})} />
+          <Dropdown label={locationLabel} options={filterOptions.locations} selected={filters.location} onChange={v => setFilters({...filters, location: v})} />
+          {activeFilterCount > 0 && <button onClick={() => setFilters(emptyFilters)} style={{ display: "flex", alignItems: "center", gap: 4, padding: "7px 12px", borderRadius: 8, fontSize: 12, background: "rgba(239,68,68,0.1)", color: "#ef4444", border: "1px solid rgba(239,68,68,0.3)", cursor: "pointer", fontFamily: F }}><X size={13} /> Clear ({activeFilterCount})</button>}
+        </div>
+        {showChart && <div style={{ marginBottom: 20 }}><AgencyChart data={data} title={tab === "college" ? "College" : "High School"} search={search} filters={filters} /></div>}
+        <DataTable data={data} locationLabel={locationLabel} search={search} filters={filters} sortConfig={sortConfig} onSort={handleSort} onUpdatePlayer={handleUpdatePlayer} onAddEval={handleAddEval} tab={tab} />
+      </div>
+      {showAddModal && <AddPlayerModal onClose={() => setShowAddModal(false)} onAdd={handleAddPlayer} locationLabel={locationLabel} tab={tab} />}
+      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}
+
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(ScoutDB));
+    </script>
+</body>
+</html>
