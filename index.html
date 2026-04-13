@@ -11,14 +11,16 @@
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
     <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+    <script>window.react = window.React;</script>
     <script src="https://unpkg.com/lucide-react@0.383.0/dist/umd/lucide-react.min.js"></script>
 </head>
 <body>
     <div id="root"></div>
     <script type="text/babel" data-type="module">
 const { useState, useMemo, useRef, useEffect, useCallback } = React;
-const { Search, ChevronDown, X, BarChart3, ChevronLeft, ChevronRight, Plus, Eye, ArrowUpDown, MessageSquarePlus, Clock, RefreshCw, Loader2, Wifi, WifiOff } = lucideReact;
+const { Search, ChevronDown, X, BarChart3, ChevronLeft, ChevronRight, Plus, Eye, ArrowUpDown, MessageSquarePlus, Clock, RefreshCw, Loader2, Wifi, WifiOff } = LucideReact;
 const { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } = Recharts;
 
 // =====================================================
@@ -443,8 +445,6 @@ function ScoutDB() {
   const [error, setError] = useState(null);
   const [lastSync, setLastSync] = useState(null);
 
-  if (!authed) return <LoginScreen onAuth={() => setAuthed(true)} />;
-
   const data = tab === "college" ? collegeData : hsData;
   const setData = tab === "college" ? setCollegeData : setHsData;
   const filters = tab === "college" ? collegeFilters : hsFilters;
@@ -465,13 +465,27 @@ function ScoutDB() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { if (authed) loadData(); }, [authed, loadData]);
 
   const filterOptions = useMemo(() => ({
     tiers: getUnique(data, "tier"), classes: getUnique(data, "class"),
     agencies: getUnique(data, "agency"), positions: getUnique(data, "position"),
     locations: getUnique(data, "location"),
   }), [data]);
+
+  const handleAddEval = useCallback((playerId, evalEntry) => {
+    setCollegeData(prev => prev.map(p => p.id === playerId ? { ...p, evaluations: [evalEntry, ...(p.evaluations || [])] } : p));
+    setHsData(prev => prev.map(p => p.id === playerId ? { ...p, evaluations: [evalEntry, ...(p.evaluations || [])] } : p));
+  }, []);
+
+  const tierCounts = useMemo(() => {
+    const counts = { "1": 0, "2": 0, "3": 0, "4": 0 };
+    data.forEach(p => { if (counts[p.tier] !== undefined) counts[p.tier]++; });
+    return counts;
+  }, [data]);
+
+  if (!authed) return <LoginScreen onAuth={() => setAuthed(true)} />;
+
   const activeFilterCount = Object.values(filters).reduce((s, a) => s + a.length, 0);
   const handleSort = (key) => setSortConfig(prev => prev.key === key ? { key, dir: prev.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" });
 
@@ -484,17 +498,6 @@ function ScoutDB() {
     setCollegeData(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p));
     setHsData(prev => prev.map(p => p.id === id ? { ...p, [field]: value } : p));
   };
-
-  const handleAddEval = useCallback((playerId, evalEntry) => {
-    setCollegeData(prev => prev.map(p => p.id === playerId ? { ...p, evaluations: [evalEntry, ...(p.evaluations || [])] } : p));
-    setHsData(prev => prev.map(p => p.id === playerId ? { ...p, evaluations: [evalEntry, ...(p.evaluations || [])] } : p));
-  }, []);
-
-  const tierCounts = useMemo(() => {
-    const counts = { "1": 0, "2": 0, "3": 0, "4": 0 };
-    data.forEach(p => { if (counts[p.tier] !== undefined) counts[p.tier]++; });
-    return counts;
-  }, [data]);
 
   // Loading / Error states
   if (loading && collegeData.length === 0) {
